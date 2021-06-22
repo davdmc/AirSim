@@ -1,0 +1,34 @@
+#!/usr/bin/env python
+
+import rospy
+from airsim_ros_pkgs.srv import SetLocalPosition
+
+class DronePathCommander(object):
+    def __init__(self, path, period):
+        self.path = path
+        self.idx = 0
+        self.period = period
+
+        self.timer = rospy.Timer(rospy.Duration(period), self.send_goal)
+
+    def send_goal(self, event):
+        print("Sending next goal...")
+        rospy.wait_for_service("/airsim_node/Drone_1/local_position_goal") # ask for service gossip_update
+        try:
+            service_local_position = rospy.ServiceProxy("/airsim_node/Drone_1/local_position_goal", SetLocalPosition)
+            resp=service_local_position(self.path[self.idx][0], self.path[self.idx][1], self.path[self.idx][2], self.path[self.idx][3], "Drone_1")
+        except rospy.ServiceException as e:
+            print("Service call failed: %s"%e)
+            resp=False
+
+        if resp and self.idx < len(self.path)-1:
+            self.idx += 1
+
+    def run(self):
+        rospy.spin()
+
+if __name__ == '__main__':
+    rospy.init_node('drone_path_commander')
+    path = [[0, 0, 0, 0],[-0.3, 0.2, -1, 0],[-0.1, -0.2, -0.8, 0],[120.0, 0, -1, 0.0], [120.0, 0, -1, 1.6],  [120.0, 20, -1, 1.6], [120.0, 20, -1, 4.8],[120.0, 0, -1, 4.8], [120.0, 0, -1, 3.2], [0.0, 0, -1, 3.2]]
+    node = DronePathCommander(path, 5)
+    node.run()

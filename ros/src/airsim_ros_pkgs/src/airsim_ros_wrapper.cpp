@@ -29,6 +29,9 @@ AirsimROSWrapper::AirsimROSWrapper(const ros::NodeHandle& nh, const ros::NodeHan
     : nh_(nh), nh_private_(nh_private), img_async_spinner_(1, &img_timer_cb_queue_), // a thread for image callbacks to be 'spun' by img_async_spinner_
     lidar_async_spinner_(1, &lidar_timer_cb_queue_)
     , // same as above, but for lidar
+    // Mod (check if needed):
+    //imu_async_spinner_(1, &imu_timer_cb_queue_)
+    //, // same as above but for imu
     host_ip_(host_ip)
     , airsim_client_images_(host_ip)
     , airsim_client_lidar_(host_ip)
@@ -38,6 +41,8 @@ AirsimROSWrapper::AirsimROSWrapper(const ros::NodeHandle& nh, const ros::NodeHan
     ros_clock_.clock.fromSec(0);
     is_used_lidar_timer_cb_queue_ = false;
     is_used_img_timer_cb_queue_ = false;
+    // Mod (check if needed):
+    // is_used_imu_timer_cb_queue = false;
 
     if (AirSimSettings::singleton().simmode_name != AirSimSettings::kSimModeTypeCar) {
         airsim_mode_ = AIRSIM_MODE::DRONE;
@@ -68,6 +73,8 @@ void AirsimROSWrapper::initialize_airsim()
         airsim_client_images_.confirmConnection();
         airsim_client_lidar_.confirmConnection();
 
+        // Mod: check if needed
+        //airsim_client_imu_.confirmConnection();
         for (const auto& vehicle_name_ptr_pair : vehicle_name_ptr_map_) {
             airsim_client_->enableApiControl(true, vehicle_name_ptr_pair.first); // todo expose as rosservice?
             airsim_client_->armDisarm(true, vehicle_name_ptr_pair.first); // todo exposes as rosservice?
@@ -119,7 +126,8 @@ void AirsimROSWrapper::create_ros_pubs_from_settings_json()
     cam_info_pub_vec_.clear();
     camera_info_msg_vec_.clear();
     vehicle_name_ptr_map_.clear();
-    size_t lidar_cnt = 0;
+    // Mod:
+    size_t lidar_cnt, imu_cnt = 0;
 
     image_transport::ImageTransport image_transporter(nh_private_);
 
@@ -269,6 +277,17 @@ void AirsimROSWrapper::create_ros_pubs_from_settings_json()
         vehicle_ros->sensor_pubs.resize(sensors.size() - cnt);
         std::partition_copy(sensors.begin(), sensors.end(), vehicle_ros->lidar_pubs.begin(), vehicle_ros->sensor_pubs.begin(), isLidar);
 
+        // Mod:
+        // same as before, for IMU
+        auto isImu = std::function<bool(const SensorPublisher& pub)>([](const SensorPublisher& pub) {
+            return pub.sensor_type == SensorBase::SensorType::Imu;
+        });
+        cnt = std::count_if(sensors.begin(), sensors.end(), isImu);
+        imu_cnt += cnt;
+        vehicle_ros->imu_pubs.resize(cnt);
+        vehicle_ros->sensor_pubs.resize(sensors.size() - cnt);
+        std::partition_copy(sensors.begin(), sensors.end(), vehicle_ros->imu_pubs.begin(), vehicle_ros->sensor_pubs.begin(), isImu);
+
         vehicle_name_ptr_map_.emplace(curr_vehicle_name, std::move(vehicle_ros)); // allows fast lookup in command callbacks in case of a lot of drones
     }
 
@@ -314,6 +333,17 @@ void AirsimROSWrapper::create_ros_pubs_from_settings_json()
         ros::TimerOptions timer_options(ros::Duration(update_lidar_every_n_sec), boost::bind(&AirsimROSWrapper::lidar_timer_cb, this, _1), &lidar_timer_cb_queue_);
         airsim_lidar_update_timer_ = nh_private_.createTimer(timer_options);
         is_used_lidar_timer_cb_queue_ = true;
+    }
+
+    // Mod:
+    // imu update on their own callback/(NOT thread, check if necessary) at a given rate
+    if (imu_cnt > 0) {
+        double update_imu_every_n_sec;
+        nh_private_.getParam("update_imu_every_n_sec", update_imu_every_n_sec);
+        //ros::TimerOptions timer_options(ros::Duration(update_imu_every_n_sec), boost::bind(&AirsimROSWrapper::imu_timer_cb, this, _1), &imu_timer_cb_queue_);
+        airsim_imu_update_timer_ = nh_private_.createTimer(ros::Duration(update_imu_every_n_sec), boost::bind(&AirsimROSWrapper::imu_timer_cb, this, _1));
+        // Mod (check if needed):
+        //is_used_imu_timer_cb_queue_ = true;
     }
 
     initialize_airsim();
@@ -1045,10 +1075,8 @@ void AirsimROSWrapper::publish_vehicle_state()
                 break;
             }
             case SensorBase::SensorType::Imu: {
-                auto imu_data = airsim_client_->getImuData(sensor_publisher.sensor_name, vehicle_ros->vehicle_name);
-                sensor_msgs::Imu imu_msg = get_imu_msg_from_airsim(imu_data);
-                imu_msg.header.frame_id = vehicle_ros->vehicle_name;
-                sensor_publisher.publisher.publish(imu_msg);
+                // Mod:
+                // handled via callback
                 break;
             }
             case SensorBase::SensorType::Distance: {
@@ -1287,6 +1315,28 @@ void AirsimROSWrapper::lidar_timer_cb(const ros::TimerEvent& event)
     catch (rpc::rpc_error& e) {
         std::string msg = e.get_error().as<std::string>();
         std::cout << "Exception raised by the API, didn't get image response." << std::endl
+                  << msg << std::endl;
+    }
+}
+
+// Mod:
+void AirsimROSWrapper::imu_timer_cb(const ros::TimerEvent& event)
+{
+    try {
+        for (auto& vehicle_name_ptr_pair : vehicle_name_ptr_map_) {
+            if (!vehicle_name_ptr_pair.second->imu_pubs.empty()) {
+                for (auto& imu_publisher : vehicle_name_ptr_pair.second->imu_pubs) {
+                    auto imu_data = airsim_client_->getImuData(imu_publisher.sensor_name,  vehicle_name_ptr_pair.first);
+                    sensor_msgs::Imu imu_msg = get_imu_msg_from_airsim(imu_data);
+                    imu_msg.header.frame_id = vehicle_name_ptr_pair.first;
+                    imu_publisher.publisher.publish(imu_msg);
+                }
+            }
+        }
+    }
+    catch (rpc::rpc_error& e) {
+        std::string msg = e.get_error().as<std::string>();
+        std::cout << "Exception raised by the API, didn't get Imu response." << std::endl
                   << msg << std::endl;
     }
 }

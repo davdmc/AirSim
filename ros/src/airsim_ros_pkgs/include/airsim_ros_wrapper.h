@@ -142,8 +142,12 @@ public:
     // std::vector<ros::CallbackQueue> callback_queues_;
     ros::AsyncSpinner img_async_spinner_;
     ros::AsyncSpinner lidar_async_spinner_;
+    // Mod (check if needed):
+    //ros::AsyncSpinner imu_async_spinner_;
     bool is_used_lidar_timer_cb_queue_;
     bool is_used_img_timer_cb_queue_;
+    // Mod (check if needed):
+    //bool is_used_imu_timer_cb_queue_;
 
 private:
     struct SensorPublisher
@@ -168,6 +172,9 @@ private:
         std::vector<SensorPublisher> sensor_pubs;
         // handle lidar seperately for max performance as data is collected on its own thread/callback
         std::vector<SensorPublisher> lidar_pubs;
+        // Mod:
+        // handle imu separately for custom timer
+        std::vector<SensorPublisher> imu_pubs;
 
         nav_msgs::Odometry curr_odom;
         sensor_msgs::NavSatFix gps_sensor_msg;
@@ -219,6 +226,7 @@ private:
     void img_response_timer_cb(const ros::TimerEvent& event); // update images from airsim_client_ every nth sec
     void drone_state_timer_cb(const ros::TimerEvent& event); // update drone state from airsim_client_ every nth sec
     void lidar_timer_cb(const ros::TimerEvent& event);
+    void imu_timer_cb(const ros::TimerEvent& event);
 
     /// ROS subscriber callbacks
     void vel_cmd_world_frame_cb(const airsim_ros_pkgs::VelCmd::ConstPtr& msg, const std::string& vehicle_name);
@@ -331,6 +339,8 @@ private:
     // seperate busy connections to airsim, update in their own thread
     msr::airlib::RpcLibClientBase airsim_client_images_;
     msr::airlib::RpcLibClientBase airsim_client_lidar_;
+    // Mod (check if needed):
+    // msr::airlib::RpcLibClientBase airsim_client_imu_;
 
     ros::NodeHandle nh_;
     ros::NodeHandle nh_private_;
@@ -339,6 +349,8 @@ private:
     // todo for multiple drones with multiple sensors, this won't scale. make it a part of VehicleROS?
     ros::CallbackQueue img_timer_cb_queue_;
     ros::CallbackQueue lidar_timer_cb_queue_;
+    // Mod (check if needed):
+    //ros::CallbackQueue imu_timer_cb_queue_;
 
     std::mutex drone_control_mutex_;
 
@@ -366,6 +378,8 @@ private:
     ros::Timer airsim_img_response_timer_;
     ros::Timer airsim_control_update_timer_;
     ros::Timer airsim_lidar_update_timer_;
+    // Mod:
+    ros::Timer airsim_imu_update_timer_;
 
     typedef std::pair<std::vector<ImageRequest>, std::string> airsim_img_request_vehicle_name_pair;
     std::vector<airsim_img_request_vehicle_name_pair> airsim_img_request_vehicle_name_pair_vec_;
