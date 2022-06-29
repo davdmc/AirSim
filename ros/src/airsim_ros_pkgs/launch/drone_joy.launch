@@ -1,0 +1,15 @@
+<launch>
+
+	<node name="joy_node" pkg="joy" type="joy_node">
+		<param name="dev" type="string" value="/dev/input/js1" />
+	</node>
+
+	<node name="drone_joy" pkg="airsim_ros_pkgs" type="drone_joy" output="screen">
+	    <param name="throttle_gain" type="double" value="-1" />
+	    <param name="yaw_gain" type="double" value="-1" />
+	    <param name="roll_gain" type="double" value="-1" />
+	    <param name="pitch_gain" type="double" value="1" />
+		<param name="drone_control_topic" type="string" value="/airsim_node/Drone_1/vel_cmd_body_frame"/>
+	</node>
+
+</launch>

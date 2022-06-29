@@ -1,0 +1,99 @@
+#!/usr/bin/env python
+
+#capture joystick events using ROS and convert to AirSim Car API commands
+#to enable:
+# rosrun joy joy_node
+
+import rospy
+import threading
+from rospy.topics import Publisher
+import sensor_msgs
+import sensor_msgs.msg
+import airsim_ros_pkgs as air
+import airsim_ros_pkgs.msg
+
+class DroneCommandTranslator(object):
+    def __init__(self):
+        self.lock = threading.Lock()
+
+        self.last_throttle = 0
+        self.last_yaw = 0
+        self.last_roll = 0
+        self.last_pitch = 0
+
+        # Joy axes XBOX: 
+        #   0: Left-hor = Yaw 
+        #   1: Left-vert = Throttle 
+        #   2: LT = _
+        #   3: Right-hor = Roll
+        #   4: Right-vert = Pitch
+        #   5: RT = _
+        #   6: Cruz-hor = _
+        #   7: Cruz-ver = _
+
+        update_rate_hz = rospy.get_param('~update_rate_hz', 30.0)
+        self.throttle_axis_index = rospy.get_param('~throttle_button_index', 1)
+        self.yaw_axis_index = rospy.get_param('~yaw_button_index', 0)
+        self.roll_axis_index = rospy.get_param('~roll_button_index', 3)
+        self.pitch_axis_index = rospy.get_param('~pitch_button_index', 4)
+        self.throttle_gain = rospy.get_param('~throttle_gain', -1)
+        self.yaw_gain = rospy.get_param('~yaw_gain', -1)
+        self.roll_gain = rospy.get_param('~roll_gain', -1)
+        self.pitch_gain = rospy.get_param('~pitch_gain', 1)
+        drone_control_topic = rospy.get_param('~drone_control_topic', '/airsim_node/Drone_1/vel_cmd_body_frame')
+
+        self.joy_msg = None
+
+        self.joy_sub = rospy.Subscriber(
+            'joy',
+            sensor_msgs.msg.Joy,
+            self.handle_joy)
+
+        self.command_pub = rospy.Publisher(
+            drone_control_topic,
+            air.msg.VelCmd,
+            queue_size=0
+        )
+
+        self.update_time = rospy.Timer(
+            rospy.Duration(1.0/update_rate_hz),
+            self.handle_update_timer
+        )
+
+    def handle_joy(self, msg):
+        print("Received joy")
+        with self.lock:
+            self.joy_msg = msg
+
+    def handle_update_timer(self, ignored):
+        joy = None
+        with self.lock:
+            joy = self.joy_msg
+
+        if joy is None:
+            return
+
+        controls = airsim_ros_pkgs.msg.VelCmd()
+
+        controls.twist.linear.z = self.throttle_gain * joy.axes[self.throttle_axis_index]
+        controls.twist.angular.z = self.yaw_gain * joy.axes[self.yaw_axis_index]
+        controls.twist.linear.y = self.roll_gain * joy.axes[self.roll_axis_index]
+        controls.twist.linear.x = self.pitch_gain * joy.axes[self.pitch_axis_index]
+        
+        self.last_throttle = controls.twist.linear.z 
+        self.last_yaw = controls.twist.angular.z
+        self.last_roll = controls.twist.linear.y
+        self.last_pitch = controls.twist.linear.y
+
+        now = rospy.Time.now()
+        #controls.header.stamp = now
+        print("publishing to: {}".format(self.command_pub.name))
+        self.command_pub.publish(controls)
+
+    def run(self):
+        rospy.spin()
+
+if __name__ == '__main__':
+    rospy.init_node('drone_joy')
+    node = DroneCommandTranslator()
+    node.run()
